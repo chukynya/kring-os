@@ -1,8 +1,2 @@
-# Compiled binaries and object files
-scheduler
 *.o
-
-# OS and editor artifacts
-.DS_Store
-*.swp
-*~
+timeshare_sim
