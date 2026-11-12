@@ -31,12 +31,18 @@ test: $(TARGET)
 	@echo "--- [TEST 3] CLI arguments mode (4 processes, 30 ms quantum) ---"
 	./$(TARGET) 4 30
 	@echo "--- [TEST 4] Max processes & min quantum (10 processes, 10 ms) ---"
-	./$(TARGET) 10 10 > /dev/null
+	test $$(./$(TARGET) 10 10 | grep -c -- "-> TERMINATED") -eq 10
 	@echo "--- [TEST 5] Invalid input rejection ---"
+	! printf "" | ./$(TARGET)
+	! printf "\n100\n" | ./$(TARGET)
 	! printf "0\n100\n" | ./$(TARGET)
 	! printf "11\n100\n" | ./$(TARGET)
 	! printf "3\n5\n" | ./$(TARGET)
 	! printf "abc\n100\n" | ./$(TARGET)
+	! printf "3abc\n100\n" | ./$(TARGET)
+	! ./$(TARGET) 0 100
+	! ./$(TARGET) 3 10001
+	! ./$(TARGET) 3
 	@echo "=== All automated tests passed ==="
 
 clean:

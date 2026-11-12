@@ -1,5 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * main.c - Interactive entry point for the time-sharing system simulator
+ * Interactive entry point for the time-sharing system simulator
  *
  * Prompts the user for the number of worker processes and the Round-Robin
  * time quantum (in milliseconds), initializes the process table, runs the
@@ -13,6 +14,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "scheduler.h"
 
@@ -79,9 +81,18 @@ static int prompt_int(const char *label, int min_val, int max_val, int *out_val)
 		return -1;
 	}
 
+	if (!strchr(buf, '\n') && !feof(stdin)) {
+		int ch;
+
+		while ((ch = getchar()) != '\n' && ch != EOF)
+			;
+		fprintf(stderr, "Error: Input line is too long.\n");
+		return -1;
+	}
+
 	if (parse_bounded_int(buf, min_val, max_val, out_val) < 0) {
-		fprintf(stderr, "Error: Value must be an integer between "
-			"%d and %d.\n", min_val, max_val);
+		fprintf(stderr, "Error: Enter an integer in [%d, %d].\n",
+			min_val, max_val);
 		return -1;
 	}
 
@@ -102,14 +113,13 @@ static int read_configuration(int argc, char **argv, int *nr_procs,
 {
 	if (argc == 3) {
 		if (parse_bounded_int(argv[1], 1, MAX_PROCS, nr_procs) < 0) {
-			fprintf(stderr, "Error: Number of processes must be "
-				"between 1 and %d.\n", MAX_PROCS);
+			fprintf(stderr, "Error: Processes must be 1..%d.\n",
+				MAX_PROCS);
 			return -1;
 		}
 		if (parse_bounded_int(argv[2], MIN_QUANTUM_MS, MAX_QUANTUM_MS,
 				      quantum_ms) < 0) {
-			fprintf(stderr, "Error: Time quantum must be between "
-				"%d and %d ms.\n",
+			fprintf(stderr, "Error: Quantum must be %d..%d ms.\n",
 				MIN_QUANTUM_MS, MAX_QUANTUM_MS);
 			return -1;
 		}
@@ -123,7 +133,7 @@ static int read_configuration(int argc, char **argv, int *nr_procs,
 	}
 
 	printf("=========================================================\n");
-	printf("   UNIX Time-Sharing System Simulator (Signals & Timers) \n");
+	printf("   UNIX Time-Sharing System Simulator (Signals & Timers)\n");
 	printf("=========================================================\n");
 
 	if (prompt_int("Enter number of worker processes", 1, MAX_PROCS,
@@ -142,6 +152,8 @@ int main(int argc, char **argv)
 	struct scheduler_ctx ctx;
 	int nr_procs = 0;
 	int quantum_ms = 0;
+
+	setvbuf(stdout, NULL, _IOLBF, 0);
 
 	if (read_configuration(argc, argv, &nr_procs, &quantum_ms) < 0)
 		return EXIT_FAILURE;

@@ -1,5 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
- * scheduler.h - Data structures and interface for the time-sharing scheduler
+ * Data structures and interface for the time-sharing scheduler
  *
  * Simulates an operating system Round-Robin (RR) time-sharing scheduler
  * in user space using POSIX signals (SIGSTOP, SIGCONT, SIGALRM, SIGCHLD)

@@ -100,27 +100,27 @@ make test
 
 ```text
 =========================================================
-   UNIX Time-Sharing System Simulator (Signals & Timers) 
+   UNIX Time-Sharing System Simulator (Signals & Timers)
 =========================================================
 Enter number of worker processes [1-10]: 3
 Enter time quantum in milliseconds [10-10000]: 400
 
-=== Initializing Process Table (3 processes, 400 ms quantum) ===
-[INIT] Process P1 created (PID 12041) | State: READY  | Workload: 3 steps
-[INIT] Process P2 created (PID 12042) | State: READY  | Workload: 4 steps
-[INIT] Process P3 created (PID 12043) | State: READY  | Workload: 5 steps
+=== Process Table Init (3 processes, 400 ms quantum) ===
+[INIT] P1 (PID 12041) | State: READY  | Steps: 3
+[INIT] P2 (PID 12042) | State: READY  | Steps: 4
+[INIT] P3 (PID 12043) | State: READY  | Steps: 5
 
 === Starting Round-Robin Time-Sharing Scheduler ===
 
-[SCHEDULER] Dispatching Process P1 (PID 12041) | Slice #1 -> sending SIGCONT
+[SCHEDULER] Dispatch P1 (PID 12041) | Slice #1 -> SIGCONT
   [WORKER P1 | PID 12041] Step 1/3 [####........]  33%
 [TIMER] Tick #1 (400 ms quantum expired) -> SIGALRM received
-[SCHEDULER] Preempted Process P1 (PID 12041) with SIGSTOP -> State: STOPPED
+[SCHEDULER] Preempted P1 (PID 12041) SIGSTOP -> STOPPED
 
-[SCHEDULER] Dispatching Process P2 (PID 12042) | Slice #1 -> sending SIGCONT
+[SCHEDULER] Dispatch P2 (PID 12042) | Slice #1 -> SIGCONT
   [WORKER P2 | PID 12042] Step 1/4 [###.........]  25%
 [TIMER] Tick #2 (400 ms quantum expired) -> SIGALRM received
-[SCHEDULER] Preempted Process P2 (PID 12042) with SIGSTOP -> State: STOPPED
+[SCHEDULER] Preempted P2 (PID 12042) SIGSTOP -> STOPPED
 ...
 +-------------------------------------------------------+
 |             TIME-SHARING SIMULATION SUMMARY           |

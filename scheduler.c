@@ -1,5 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * scheduler.c - Parent Round-Robin (RR) time-sharing scheduler implementation
+ * Parent Round-Robin (RR) time-sharing scheduler implementation
  *
  * Uses an interval timer (setitimer with ITIMER_REAL -> SIGALRM) to enforce
  * a fixed time quantum. On each timer interrupt, the scheduler preempts the
@@ -90,13 +91,14 @@ static int setup_signal_handlers(void)
 	sa.sa_flags = 0;
 
 	sa.sa_handler = sigalrm_handler;
+	sa.sa_flags = SA_RESTART;
 	if (sigaction(SIGALRM, &sa, NULL) < 0) {
 		perror("sigaction(SIGALRM)");
 		return -1;
 	}
 
 	sa.sa_handler = sigchld_handler;
-	sa.sa_flags = SA_NOCLDSTOP;
+	sa.sa_flags = SA_NOCLDSTOP | SA_RESTART;
 	if (sigaction(SIGCHLD, &sa, NULL) < 0) {
 		perror("sigaction(SIGCHLD)");
 		return -1;
@@ -169,7 +171,9 @@ static void cleanup_spawned_procs(struct scheduler_ctx *ctx, int count)
 		if (ctx->procs[i].pid > 0 &&
 		    ctx->procs[i].state != PROC_TERMINATED) {
 			kill(ctx->procs[i].pid, SIGKILL);
-			waitpid(ctx->procs[i].pid, NULL, 0);
+			while (waitpid(ctx->procs[i].pid, NULL, 0) < 0 &&
+			       errno == EINTR)
+				;
 			ctx->procs[i].state = PROC_TERMINATED;
 		}
 	}
@@ -204,14 +208,16 @@ int scheduler_init(struct scheduler_ctx *ctx, int nr_procs, int quantum_ms)
 	if (step_delay_ms < 1)
 		step_delay_ms = 1;
 
-	setvbuf(stdout, NULL, _IOLBF, 0);
-	printf("\n=== Initializing Process Table (%d processes, "
-	       "%d ms quantum) ===\n", nr_procs, quantum_ms);
+	printf("\n=== Process Table Init (%d processes, %d ms quantum) ===\n",
+	       nr_procs, quantum_ms);
 
 	for (i = 0; i < nr_procs; i++) {
 		int steps = BASE_WORK_STEPS + (i % 3);
 		int status = 0;
-		pid_t pid = fork();
+		pid_t pid;
+
+		fflush(NULL);
+		pid = fork();
 
 		if (pid < 0) {
 			perror("fork");
@@ -229,14 +235,14 @@ int scheduler_init(struct scheduler_ctx *ctx, int nr_procs, int quantum_ms)
 		ctx->procs[i].state = PROC_READY;
 
 		/* Parent waits until child pauses itself with raise(SIGSTOP) */
-		if (wait_for_child_stop(pid, &status) < 0) {
+		if (wait_for_child_stop(pid, &status) < 0 ||
+		    !WIFSTOPPED(status)) {
 			perror("waitpid");
 			cleanup_spawned_procs(ctx, i + 1);
 			return -1;
 		}
 
-		printf("[INIT] Process P%d created (PID %d) | State: %-6s | "
-		       "Workload: %d steps\n",
+		printf("[INIT] P%d (PID %d) | State: %-6s | Steps: %d\n",
 		       ctx->procs[i].id, (int)pid,
 		       proc_state_name(ctx->procs[i].state), steps);
 	}
@@ -283,10 +289,10 @@ static int check_child_terminated(struct scheduler_ctx *ctx,
 	} while (ret < 0 && errno == EINTR);
 
 	if (ret == proc->pid && (WIFEXITED(status) || WIFSIGNALED(status))) {
+		configure_timer(0);
 		proc->state = PROC_TERMINATED;
 		ctx->active_procs--;
-		printf("[SCHEDULER] Process P%d (PID %d) finished -> "
-		       "State: TERMINATED (%d active left)\n",
+		printf("[SCHEDULER] P%d (PID %d) finished -> TERMINATED (%d left)\n",
 		       proc->id, (int)proc->pid, ctx->active_procs);
 		return 1;
 	}
@@ -298,19 +304,23 @@ static int check_child_terminated(struct scheduler_ctx *ctx,
  * preempt_running_proc - Preempt current process with SIGSTOP on timer tick
  * @ctx:  Scheduler context
  * @proc: Currently running process control block
+ *
+ * Return: 0 on success, -1 on error.
  */
-static void preempt_running_proc(struct scheduler_ctx *ctx,
-				 struct proc_control_block *proc)
+static int preempt_running_proc(struct scheduler_ctx *ctx,
+				struct proc_control_block *proc)
 {
 	int status = 0;
 
 	if (kill(proc->pid, SIGSTOP) < 0 && errno != ESRCH) {
 		perror("kill(SIGSTOP)");
-		return;
+		return -1;
 	}
 
-	if (wait_for_child_stop(proc->pid, &status) < 0)
-		return;
+	if (wait_for_child_stop(proc->pid, &status) < 0) {
+		perror("waitpid");
+		return -1;
+	}
 
 	ctx->total_ticks++;
 	printf("[TIMER] Tick #%d (%d ms quantum expired) -> SIGALRM received\n",
@@ -319,15 +329,15 @@ static void preempt_running_proc(struct scheduler_ctx *ctx,
 	if (WIFEXITED(status) || WIFSIGNALED(status)) {
 		proc->state = PROC_TERMINATED;
 		ctx->active_procs--;
-		printf("[SCHEDULER] Process P%d (PID %d) exited at tick -> "
-		       "State: TERMINATED (%d active left)\n",
+		printf("[SCHEDULER] P%d (PID %d) exited -> TERMINATED (%d left)\n",
 		       proc->id, (int)proc->pid, ctx->active_procs);
 	} else if (WIFSTOPPED(status)) {
 		proc->state = PROC_STOPPED;
-		printf("[SCHEDULER] Preempted Process P%d (PID %d) with "
-		       "SIGSTOP -> State: STOPPED\n",
+		printf("[SCHEDULER] Preempted P%d (PID %d) SIGSTOP -> STOPPED\n",
 		       proc->id, (int)proc->pid);
 	}
+
+	return 0;
 }
 
 /*
@@ -365,8 +375,7 @@ int scheduler_run(struct scheduler_ctx *ctx)
 		proc->slices_used++;
 		ctx->context_switches++;
 
-		printf("\n[SCHEDULER] Dispatching Process P%d (PID %d) | "
-		       "Slice #%d -> sending SIGCONT\n",
+		printf("\n[SCHEDULER] Dispatch P%d (PID %d) | Slice #%d -> SIGCONT\n",
 		       proc->id, (int)proc->pid, proc->slices_used);
 
 		timer_expired = 0;
@@ -385,11 +394,7 @@ int scheduler_run(struct scheduler_ctx *ctx)
 		}
 
 		while (!timer_expired && !stop_requested) {
-			if (child_exited) {
-				child_exited = 0;
-				if (check_child_terminated(ctx, proc))
-					break;
-			}
+			child_exited = 0;
 			if (check_child_terminated(ctx, proc))
 				break;
 			if (timer_expired || child_exited || stop_requested)
@@ -400,14 +405,16 @@ int scheduler_run(struct scheduler_ctx *ctx)
 		configure_timer(0);
 
 		if (stop_requested) {
-			printf("\n[SCHEDULER] Termination signal received. "
-			       "Cleaning up worker processes...\n");
+			printf("\n[SCHEDULER] Signal received, cleaning up...\n");
 			cleanup_spawned_procs(ctx, ctx->nr_procs);
 			return -1;
 		}
 
-		if (proc->state == PROC_RUNNING)
-			preempt_running_proc(ctx, proc);
+		if (proc->state == PROC_RUNNING &&
+		    preempt_running_proc(ctx, proc) < 0) {
+			cleanup_spawned_procs(ctx, ctx->nr_procs);
+			return -1;
+		}
 	}
 
 	configure_timer(0);

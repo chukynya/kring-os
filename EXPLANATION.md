@@ -45,10 +45,10 @@ When prompted:
 
 **What to point out while it runs on screen:**
 1. **Initialization (`[INIT]`)**: The parent process forks 3 child processes (`P1`, `P2`, `P3`). Each child immediately pauses itself in the `READY` state before doing any work.
-2. **Dispatch (`[SCHEDULER] Dispatching ... -> sending SIGCONT`)**: The scheduler picks `P1` and sends `SIGCONT` to let it run on the CPU.
+2. **Dispatch (`[SCHEDULER] Dispatch P1 ... -> SIGCONT`)**: The scheduler picks `P1` and sends `SIGCONT` to let it run on the CPU.
 3. **Worker Progress (`[WORKER P1 ...] Step 1/3`)**: While `P1` has the CPU, it completes a step of its workload and prints its progress bar.
-4. **Timer Preemption (`[TIMER] Tick #1 ... -> SIGALRM received`)**: After 500 ms, the OS interval timer fires `SIGALRM`. The scheduler preempts `P1` by sending `SIGSTOP` (`State: STOPPED`) and switches to `P2`, then `P3`, in Round-Robin order.
-5. **Process Completion (`State: TERMINATED`)**: In later rounds, `P1` finishes all 3 steps early, exits, and the scheduler automatically skips `P1` and continues Round-Robin between `P2` and `P3`.
+4. **Timer Preemption (`[TIMER] Tick #1 ... -> SIGALRM received`)**: After 500 ms, the OS interval timer fires `SIGALRM`. The scheduler preempts `P1` by sending `SIGSTOP` (`-> STOPPED`) and switches to `P2`, then `P3`, in Round-Robin order.
+5. **Process Completion (`-> TERMINATED`)**: In later rounds, `P1` finishes all 3 steps early, exits, and the scheduler automatically skips `P1` and continues Round-Robin between `P2` and `P3`.
 6. **Summary Table**: At the end, the program prints the total time slices used by each process, total timer interrupts (`SIGALRM`), and total context switches.
 
 ---
@@ -111,7 +111,7 @@ static volatile sig_atomic_t stop_requested;
 ```
 - We use `volatile sig_atomic_t` flags because the C standard guarantees that writing to `sig_atomic_t` inside an asynchronous signal handler is atomic and safe.
 - Instead of calling non-async-signal-safe functions like `printf()` inside the signal handler, the handlers simply set `timer_expired = 1` (on `SIGALRM`), `child_exited = 1` (on `SIGCHLD`), or `stop_requested = 1` (on `SIGINT`/`SIGTERM`), waking up `pause()` in the main loop.
-- `setup_signal_handlers()` registers these handlers using `sigaction()`, passing `SA_NOCLDSTOP` for `SIGCHLD` so `SIGCHLD` is only delivered when a child actually terminates (not when it pauses on `SIGSTOP`).
+- `setup_signal_handlers()` registers these handlers using `sigaction()`, passing `SA_NOCLDSTOP` for `SIGCHLD` so `SIGCHLD` is only delivered when a child actually terminates (not when it pauses on `SIGSTOP`), and `SA_RESTART` on `SIGALRM`/`SIGCHLD` so signal delivery never interrupts `printf()`/`write()` with `EINTR` on a terminal (`pause()` is never restarted by `SA_RESTART`).
 
 #### B. Hardware/Kernel Interval Timer (`configure_timer`)
 ```c

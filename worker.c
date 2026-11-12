@@ -1,5 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * worker.c - Child worker process simulation logic
+ * Child worker process simulation logic
  *
  * Each child process represents a user task managed by the parent scheduler.
  * Upon creation, the worker stops itself with SIGSTOP and waits for the
@@ -97,8 +98,8 @@ void worker_run(int proc_id, int total_steps, int step_delay_ms)
 		print_progress_bar(proc_id, my_pid, step, total_steps);
 	}
 
-	printf("  [WORKER P%d | PID %d] Workload complete (%d/%d steps). "
-	       "Exiting.\n", proc_id, (int)my_pid, total_steps, total_steps);
+	printf("  [WORKER P%d | PID %d] Completed %d/%d steps. Exiting.\n",
+	       proc_id, (int)my_pid, total_steps, total_steps);
 	fflush(stdout);
 	exit(EXIT_SUCCESS);
 }
