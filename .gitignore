@@ -1,1 +1,18 @@
+# Kernel module build artifacts (Kbuild)
 *.o
+*.ko
+*.mod
+*.mod.c
+*.mod.o
+.*.cmd
+Module.symvers
+modules.order
+.cache.mk
+
+# User-space controller binary
+timeshare_ctl
+
+# Virtual Machine build & Vagrant state
+vm/.build/
+.vagrant/
+*.ova

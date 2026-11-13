@@ -1,43 +1,83 @@
-# Makefile - Build automation for UNIX Time-Sharing System Simulator
+# SPDX-License-Identifier: GPL-2.0
+# Makefile - Kbuild & Build Automation for Kernel Round-Robin Scheduler
 
-CC	= gcc
-CFLAGS	= -Wall -Wextra -Werror -std=c11 -pedantic
-TARGET	= timeshare_sim
-SRCS	= main.c scheduler.c worker.c
-OBJS	= $(SRCS:.c=.o)
-HDRS	= scheduler.h
+ifneq ($(KERNELRELEASE),)
+# Invoked by Linux Kernel Kbuild system
+obj-m += timeshare_kmod.o
+ccflags-y := $(shell grep -q "hrtimer_setup" $(srctree)/include/linux/hrtimer.h 2>/dev/null && echo -DHAVE_HRTIMER_SETUP)
+else
 
-.PHONY: all run demo test clean
+KDIR		?= /lib/modules/$(shell uname -r)/build
+PWD		:= $(shell pwd)
+CC		= gcc
+CFLAGS		= -Wall -Wextra -Werror -std=c11 -pedantic
+CTL_TARGET	= timeshare_ctl
+KMOD_TARGET	= timeshare_kmod.ko
 
-all: $(TARGET)
+.PHONY: all kmod ctl load unload run demo vm-qemu vm-export-ova test checkpatch clean
 
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) $(OBJS) -o $(TARGET)
+all: kmod ctl
 
-%.o: %.c $(HDRS)
-	$(CC) $(CFLAGS) -c $< -o $@
+kmod:
+	$(MAKE) -C $(KDIR) M=$(PWD) modules
 
-run: $(TARGET)
-	./$(TARGET)
+ctl: $(CTL_TARGET)
 
-demo: $(TARGET)
-	printf "3\n400\n" | ./$(TARGET)
+$(CTL_TARGET): main.c scheduler.h
+	$(CC) $(CFLAGS) main.c -o $(CTL_TARGET)
 
-test: $(TARGET)
-	@echo "--- [TEST 1] Standard Round-Robin (3 processes, 50 ms quantum) ---"
-	printf "3\n50\n" | ./$(TARGET)
-	@echo "--- [TEST 2] Single Process boundary (1 process, 20 ms quantum) ---"
-	printf "1\n20\n" | ./$(TARGET)
-	@echo "--- [TEST 3] CLI arguments mode (4 processes, 30 ms quantum) ---"
-	./$(TARGET) 4 30
-	@echo "--- [TEST 4] Max processes & min quantum (10 processes, 10 ms) ---"
-	./$(TARGET) 10 10 > /dev/null
-	@echo "--- [TEST 5] Invalid input rejection ---"
-	! printf "0\n100\n" | ./$(TARGET)
-	! printf "11\n100\n" | ./$(TARGET)
-	! printf "3\n5\n" | ./$(TARGET)
-	! printf "abc\n100\n" | ./$(TARGET)
-	@echo "=== All automated tests passed ==="
+load: kmod
+	@if lsmod | grep -q "^timeshare_kmod"; then \
+		sudo rmmod timeshare_kmod; \
+	fi
+	sudo insmod $(KMOD_TARGET)
+	@echo "Kernel module loaded: /proc/timeshare is ready."
+
+unload:
+	@if lsmod | grep -q "^timeshare_kmod"; then \
+		sudo rmmod timeshare_kmod; \
+		echo "Kernel module timeshare_kmod unloaded."; \
+	else \
+		echo "Kernel module timeshare_kmod is not currently loaded."; \
+	fi
+
+run: all
+	@if [ -e /proc/timeshare ]; then \
+		./$(CTL_TARGET); \
+	else \
+		./vm/qemu-run.sh; \
+	fi
+
+demo: all
+	@if [ -e /proc/timeshare ]; then \
+		./$(CTL_TARGET) 3 400; \
+	else \
+		./vm/qemu-run.sh --demo; \
+	fi
+
+vm-qemu: all
+	./vm/qemu-run.sh
+
+vm-export-ova:
+	./vm/export-ova.sh
+
+test: all
+	@if [ -e /proc/timeshare ]; then \
+		./vm/qemu-run.sh --test-local; \
+	else \
+		./vm/qemu-run.sh --test; \
+	fi
+
+checkpatch:
+	@if [ -x "$(KDIR)/scripts/checkpatch.pl" ]; then \
+		$(KDIR)/scripts/checkpatch.pl --no-tree -f timeshare_kmod.c main.c scheduler.h; \
+	else \
+		echo "checkpatch.pl not found in $(KDIR)/scripts/"; \
+	fi
 
 clean:
-	$(RM) $(OBJS) $(TARGET)
+	$(MAKE) -C $(KDIR) M=$(PWD) clean
+	$(RM) $(CTL_TARGET)
+	$(RM) -r vm/.build
+
+endif
