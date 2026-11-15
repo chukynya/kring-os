@@ -66,43 +66,65 @@ User Space (Ring 3: ./timeshare_sim)                Kernel Space (Ring 0: timesh
 
 ## Debian Minimal (`netinst`, No GUI) VM Setup & Testing Guide (Rubric Row 1 — 30%)
 
-Inspired by Linus Torvalds' 1991 Linux `0.01` environment (`Kernel + tty1 + bash + gcc + make`), the cleanest instructional OS setup is **Debian 12 (`Bookworm`) Minimal (`netinst`)** with **no desktop GUI**:
+Inspired by Linus Torvalds' 1991 Linux `0.01` environment (`Kernel + tty1 + bash + gcc + make`), the cleanest instructional OS setup is **Debian 12 (`Bookworm`) or Debian 13 (`Trixie`) Minimal (`netinst`)** with **no desktop GUI**:
 
-### Step 1: Download & Create the Virtual Machine
-1. Download the official **Debian `netinst` ISO** (~650 MB) from [debian.org/distrib/netinst](https://www.debian.org/distrib/netinst) (`debian-12.x.x-amd64-netinst.iso`, or `arm64` on Apple Silicon UTM/VMware).
-2. In **VirtualBox**, **VMware**, **UTM**, or **QEMU/KVM**, create a new Linux VM:
+### Step 1: Download the `amd64` ISO & Create the Virtual Machine
+1. Download the official **Debian `netinst` CD image** (~650 MB) from [debian.org/distrib/netinst](https://www.debian.org/distrib/netinst):
+   - Architecture to pick: **`amd64`** (for 64-bit Intel/AMD `x86_64` systems).
+2. In **VirtualBox**, **Virt-Manager (QEMU/KVM)**, or **VMware**, create a new Linux VM:
    - **Memory (RAM)**: `1024 MB` – `2048 MB`
    - **Processors**: `1` or `2` vCPUs
    - **Hard Disk**: `10 GB` – `20 GB` dynamically allocated
 
-### Step 2: Install Debian Minimal (TTY-Only, No GUI)
-1. Boot from the ISO and select **Install** (text-mode installer).
-2. Complete the hostname, root password, non-root user creation, and disk partitioning (**Guided - use entire disk** -> **All files in one partition**).
-3. At the **Software selection (`tasksel`)** screen, use `Spacebar` to configure:
-   - `[ ] Debian desktop environment` (**UNCHECK**)
-   - `[ ] ... GNOME` (**UNCHECK**)
-   - `[*] SSH server` *(optional — helpful for copy-pasting from your host terminal)*
+### Step 2: Step-by-Step Debian Installer Choices (TTY-Only, No GUI)
+1. **Installer Boot Menu**: Select **`Install`** (text-mode installer) and press **Enter**.
+2. **Language, Location & Keyboard**:
+   - **Language**: **`English`**
+   - **Location**: **`United States`** (or `other` $\rightarrow$ `Asia` $\rightarrow$ `Indonesia`)
+   - **Keyboard**: **`American English`**
+3. **Network Configuration**:
+   - **Hostname**: `debian`
+   - **Domain name**: Leave **blank (empty)** and press **Enter**.
+4. **Users and Passwords**:
+   - **Root password**: Enter a password for `root` and confirm it.
+   - **Full name & Username for new user**: Enter `henry` and set a user password.
+5. **Partition Disks**:
+   - Choose **`Guided - use entire disk`** $\rightarrow$ select **`/dev/vda`** (or `/dev/sda`) $\rightarrow$ **`All files in one partition (recommended for new users)`** $\rightarrow$ **`Finish partitioning and write changes to disk`** $\rightarrow$ **`<Yes>`**.
+6. **Configure the Package Manager**:
+   - **Scan extra installation media?**: Select **`<No>`**.
+   - **Debian archive mirror**: Choose your country $\rightarrow$ **`deb.debian.org`** $\rightarrow$ leave **HTTP proxy** blank.
+   - **Package usage survey**: Select **`<No>`**.
+7. **Software Selection (`tasksel`)**:
+   Use the **Arrow keys** and **Spacebar** so only the minimal CLI tools are selected:
+   - `[ ] Debian desktop environment` (**UNCHECK** with Spacebar)
+   - `[ ] ... GNOME` (**UNCHECK** with Spacebar)
+   - `[*] SSH server` (**CHECK** with Spacebar — allows easy SSH & copy-paste from host)
    - `[*] standard system utilities` (**KEEP CHECKED**)
-4. Install the GRUB boot loader to the primary drive and reboot. Your VM will boot in under 5 seconds directly into a pure Linux `tty1` login prompt.
+   Press **Tab** to highlight **`<Continue>`** and press **Enter**.
+8. **Install the GRUB Boot Loader**:
+   - **Install the GRUB boot loader to your primary drive?**: Select **`<Yes>`**.
+   - **Device for boot loader installation**: Select **`/dev/vda`** (or `/dev/sda`, *not* `Enter device manually`) and press **Enter**.
+9. **Finish & Boot**:
+   - Select **`<Continue>`** to reboot. *(If the VM boots back into the installer menu, eject/remove the `.iso` CD from your VM settings so it boots into the `*Debian GNU/Linux` GRUB menu.)*
+   - At GRUB, select **`*Debian GNU/Linux`** to boot into the **`debian login:` (`tty1`)** prompt.
 
-### Step 3: Install GCC, Make, and Matching Kernel Headers
-Log in to your Debian VM and install the compiler toolchain and kernel headers:
+### Step 3: Install GCC, Make, Kernel Headers & `tmux`
+At `debian login:`, log in as `root` (or log in as `henry` and run `su -`) and install the build tools and kernel headers:
 ```bash
 su -
 apt update
-apt install -y build-essential linux-headers-$(uname -r) git sudo
-usermod -aG sudo <your-username>
-exit
+apt install -y build-essential linux-headers-$(uname -r) git sudo tmux
+usermod -aG sudo henry
 ```
-*(Log out and log back in so `sudo` takes effect, or run privileged commands as `root`.)*
 
 ### Step 4: Clone & Build Both User Space and the Kernel Module
+You can run these commands directly in `tty1`, or connect from your host terminal via SSH (`ip -4 a` inside the VM to see the IP, then `ssh henry@<VM_IP>` on your host):
 ```bash
 git clone https://github.com/chukynya/kring-os.git
 cd kring-os
 
 # 1. Build the user-space Round-Robin simulator (timeshare_sim)
-make
+make clean && make
 
 # 2. Build the Loadable Kernel Module (kmod/timeshare_kmod.ko)
 make kmod
@@ -129,6 +151,23 @@ sudo dmesg | tail -n 20
 # 6. Unload the kernel module cleanly when finished
 sudo rmmod timeshare_kmod
 ```
+
+### Step 6: Useful `tty1` Tips (Scrolling Up & Shutting Down the VM)
+- **How to Scroll Up/Down in `tty1`**:
+  1. Pipe output into `less` (use **Up/Down Arrow** or **Page Up/Page Down** to scroll, press **`q`** to exit):
+     ```bash
+     ./timeshare_sim 3 50 | less
+     sudo dmesg | less
+     ```
+  2. Or start a `tmux` session (`tmux`), press **`Ctrl + B`** then **`Page Up`** (or **`[`**) to scroll freely with the arrow keys, and press **`q`** to return to typing.
+- **How to Shut Down the VM Cleanly**:
+  - Make sure you are logged into a shell prompt (e.g., `root@debian:~#` — do *not* type `shutdown` at the `debian login:` username prompt).
+  - Run:
+    ```bash
+    poweroff
+    # or:
+    sudo shutdown now
+    ```
 
 ---
 
