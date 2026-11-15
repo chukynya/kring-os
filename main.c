@@ -1,28 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * User-space controller for the Kernel Round-Robin Time-Sharing Scheduler
+ * Interactive entry point for the time-sharing system simulator
  *
- * Prompts the user (or parses CLI arguments) for the number of kernel worker
- * threads and the Round-Robin time quantum in milliseconds, writes the
- * configuration to /proc/timeshare, and streams the live kernel execution
- * trace until all kernel worker threads complete.
+ * Prompts the user for the number of worker processes and the Round-Robin
+ * time quantum (in milliseconds), initializes the process table, runs the
+ * signal/timer scheduler, and displays a final summary table.
  */
 
 #define _POSIX_C_SOURCE 200809L
 
 #include <ctype.h>
 #include <errno.h>
-#include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-#include <unistd.h>
 
 #include "scheduler.h"
-
-#define READ_BUF_SIZE	65536
-#define POLL_INTERVAL_NS 20000000L
 
 /*
  * parse_bounded_int - Parse a strict integer string within [min_val, max_val]
@@ -139,7 +133,7 @@ static int read_configuration(int argc, char **argv, int *nr_procs,
 	}
 
 	printf("=========================================================\n");
-	printf("   Linux Kernel Time-Sharing Scheduler (hrtimer & kthread)\n");
+	printf("   UNIX Time-Sharing System Simulator (Signals & Timers)\n");
 	printf("=========================================================\n");
 
 	if (prompt_int("Enter number of worker processes", 1, MAX_PROCS,
@@ -153,120 +147,9 @@ static int read_configuration(int argc, char **argv, int *nr_procs,
 	return 0;
 }
 
-/*
- * trigger_kernel_sim - Write configuration to /proc/timeshare
- * @nr_procs:   Number of worker kthreads
- * @quantum_ms: Time quantum in milliseconds
- *
- * Return: 0 on success, -1 on error.
- */
-static int trigger_kernel_sim(int nr_procs, int quantum_ms)
-{
-	char cmd[64];
-	ssize_t written;
-	int len;
-	int fd;
-
-	fd = open(TIMESHARE_PROC_PATH, O_WRONLY);
-	if (fd < 0) {
-		fprintf(stderr,
-			"Error: Cannot open %s (%s).\n"
-			"Hint: Load the kernel module first with:\n"
-			"  sudo insmod timeshare_kmod.ko\n"
-			"or run inside the QEMU VM with:\n"
-			"  make vm-qemu\n",
-			TIMESHARE_PROC_PATH, strerror(errno));
-		return -1;
-	}
-
-	len = snprintf(cmd, sizeof(cmd), "%d %d\n", nr_procs, quantum_ms);
-	written = write(fd, cmd, (size_t)len);
-	if (written < 0) {
-		perror("write(/proc/timeshare)");
-		close(fd);
-		return -1;
-	}
-
-	close(fd);
-	return 0;
-}
-
-/*
- * stream_kernel_output - Poll /proc/timeshare and stream new trace lines
- *
- * Return: 0 when [KERNEL_STATUS: COMPLETED] is observed, -1 on error.
- */
-static int stream_kernel_output(void)
-{
-	struct timespec delay;
-	size_t printed_len = 0;
-	char *buf;
-
-	buf = malloc(READ_BUF_SIZE);
-	if (!buf) {
-		perror("malloc");
-		return -1;
-	}
-
-	delay.tv_sec = 0;
-	delay.tv_nsec = POLL_INTERVAL_NS;
-
-	for (;;) {
-		char *status_marker;
-		size_t content_len;
-		ssize_t total = 0;
-		ssize_t n;
-		int fd;
-
-		fd = open(TIMESHARE_PROC_PATH, O_RDONLY);
-		if (fd < 0) {
-			perror("open(/proc/timeshare)");
-			free(buf);
-			return -1;
-		}
-
-		while ((n = read(fd, buf + total,
-				 READ_BUF_SIZE - 1 - (size_t)total)) > 0) {
-			total += n;
-			if (total >= READ_BUF_SIZE - 1)
-				break;
-		}
-		close(fd);
-
-		if (n < 0) {
-			perror("read(/proc/timeshare)");
-			free(buf);
-			return -1;
-		}
-
-		buf[total] = '\0';
-		status_marker = strstr(buf, "\n[KERNEL_STATUS:");
-		if (!status_marker)
-			status_marker = strstr(buf, "[KERNEL_STATUS:");
-
-		content_len = status_marker ?
-			      (size_t)(status_marker - buf) : (size_t)total;
-
-		if (content_len > printed_len) {
-			fwrite(buf + printed_len, 1,
-			       content_len - printed_len, stdout);
-			fflush(stdout);
-			printed_len = content_len;
-		}
-
-		if (status_marker &&
-		    strstr(status_marker, "[KERNEL_STATUS: COMPLETED]"))
-			break;
-
-		nanosleep(&delay, NULL);
-	}
-
-	free(buf);
-	return 0;
-}
-
 int main(int argc, char **argv)
 {
+	struct scheduler_ctx ctx;
 	int nr_procs = 0;
 	int quantum_ms = 0;
 
@@ -275,11 +158,16 @@ int main(int argc, char **argv)
 	if (read_configuration(argc, argv, &nr_procs, &quantum_ms) < 0)
 		return EXIT_FAILURE;
 
-	if (trigger_kernel_sim(nr_procs, quantum_ms) < 0)
+	if (scheduler_init(&ctx, nr_procs, quantum_ms) < 0) {
+		fprintf(stderr, "Error: Failed to initialize scheduler.\n");
 		return EXIT_FAILURE;
+	}
 
-	if (stream_kernel_output() < 0)
+	if (scheduler_run(&ctx) < 0) {
+		fprintf(stderr, "Error: Scheduler execution failed.\n");
 		return EXIT_FAILURE;
+	}
 
+	scheduler_print_summary(&ctx);
 	return EXIT_SUCCESS;
 }

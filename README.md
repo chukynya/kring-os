@@ -1,14 +1,12 @@
-# Linux Kernel Time-Sharing Scheduler (`timeshare_kmod` — `hrtimer` & `kthread`)
+# UNIX Time-Sharing System Simulator & Linux Kernel `/proc` Module (C)
 
-A clean, modular **Linux Kernel-Level Round-Robin (RR) Time-Sharing Scheduler** implemented as a Loadable Kernel Module (`timeshare_kmod.ko`) in C, paired with an interactive user-space controller (`timeshare_ctl`) and a portable **Virtual Machine (VM) environment** (QEMU/KVM, VirtualBox, Vagrant, and `.ova` appliance).
+A clean, modular implementation of an operating system **Round-Robin (RR) Time-Sharing Scheduler** in C for Linux/UNIX, paired with a lightweight **Loadable Kernel Module (`kmod/timeshare_kmod.c`)** that integrates scheduler state transitions into the Linux kernel via `/proc/timeshare` system calls (`open()`, `write()`, `read()`, `close()`).
 
-Instead of simulating scheduling in user space, this project executes inside **Linux Kernel Space (Ring 0)** using:
-- **High-Resolution Kernel Timers (`struct hrtimer`)** firing in hardware/software interrupt context (`CLOCK_MONOTONIC`) when the time quantum expires.
-- **Kernel Worker Threads (`struct task_struct` via `kthread_create`)** managed by a coordinator kernel scheduler thread (`timeshare_sched_fn`).
-- **Kernel Waitqueues (`wait_queue_head_t`)** to context-switch worker `kthread`s between running (`PROC_RUNNING`) and sleeping/preempted (`PROC_STOPPED` / `TASK_INTERRUPTIBLE`).
-- **`/proc/timeshare` Pseudo-Filesystem Interface (`proc_ops` + `seq_file`)** and kernel ring buffer logging (`pr_info` / `dmesg`).
+It is designed around:
+- **LO 3**: Relating fundamental OS design (Linus Torvalds' 1991 Linux `0.01` hardware timer interrupt context switching between `AAAA` and `BBBB` in a minimal TTY environment, and the classic Time-Sharing `10–100 ms` time quantum) to modern Linux kernel development.
+- **LO 4**: Writing user-space and kernel-space C programs that interact with the operating system via POSIX signals (`SIGSTOP`, `SIGCONT`, `SIGALRM`, `SIGCHLD`), interval timers (`setitimer`), process control system calls (`fork()`, `waitpid()`, `kill()`, `pause()`), and `/proc` Virtual File System (VFS) handlers (`proc_create()`, `copy_from_user()`, `seq_printf()`).
 
-All C source and header files strictly follow the [Linux Kernel Coding Style](https://docs.kernel.org/process/coding-style.html) and pass `scripts/checkpatch.pl` with **0 errors and 0 warnings**.
+All C source and header files follow the [Linux Kernel Coding Style](https://docs.kernel.org/process/coding-style.html).
 
 ---
 
@@ -16,158 +14,201 @@ All C source and header files strictly follow the [Linux Kernel Coding Style](ht
 
 | File | Responsibility |
 | :--- | :--- |
-| [scheduler.h](file:///home/henry/Documents/project-cawu-6/operating-system/scheduler.h) | Defines shared constants (`MAX_PROCS`, `MIN_QUANTUM_MS`, `MAX_QUANTUM_MS`), `/proc/timeshare` paths, `enum proc_state`, and `proc_state_name()`. |
-| [timeshare_kmod.c](file:///home/henry/Documents/project-cawu-6/operating-system/timeshare_kmod.c) | **Ring 0 Linux Kernel Module (`timeshare_kmod.ko`)**: implements `struct kproc_pcb`, `struct ksched_ctx`, `hrtimer` interrupt callback, worker `kthread`s, Round-Robin scheduler `kthread`, and `/proc/timeshare`. |
-| [main.c](file:///home/henry/Documents/project-cawu-6/operating-system/main.c) | **User-Space Controller (`timeshare_ctl`)**: interactive prompt & CLI validator that writes `<nr_procs> <quantum_ms>` to `/proc/timeshare` and streams the live kernel execution trace. |
-| [Makefile](file:///home/henry/Documents/project-cawu-6/operating-system/Makefile) | Integrates Linux Kbuild (`obj-m += timeshare_kmod.o`) and automates building, loading/unloading, running inside QEMU VM (`make vm-qemu`), demoing (`make demo`), testing (`make test`), and style checking (`make checkpatch`). |
-| [Vagrantfile](file:///home/henry/Documents/project-cawu-6/operating-system/Vagrantfile) | Automated VirtualBox + Ubuntu 24.04 LTS VM definition so friends on Windows, macOS, or Linux can run `vagrant up && vagrant ssh`. |
-| [vm/qemu-run.sh](file:///home/henry/Documents/project-cawu-6/operating-system/vm/qemu-run.sh) | Portable QEMU/KVM runner that packages `timeshare_kmod.ko` into an `initramfs` and boots a real Linux kernel in the terminal in ~2 seconds. |
-| [vm/setup-vm.sh](file:///home/henry/Documents/project-cawu-6/operating-system/vm/setup-vm.sh) | Universal VM provisioning script for Ubuntu/Debian (`apt`) and Fedora/RHEL (`dnf`) virtual machines. |
-| [vm/export-ova.sh](file:///home/henry/Documents/project-cawu-6/operating-system/vm/export-ova.sh) | Exports a VirtualBox VM into a single `timeshare-kernel-vm.ova` file for easy sharing with friends. |
-| [VM_GUIDE.md](file:///home/henry/Documents/project-cawu-6/operating-system/VM_GUIDE.md) | Complete step-by-step guide on setting up, using, and sharing the Virtual Machine environment. |
-| [EXPLANATION.md](file:///home/henry/Documents/project-cawu-6/operating-system/EXPLANATION.md) | Detailed code walkthrough and **Video Presentation Guide** aligned with the grading rubric. |
+| `scheduler.h` | Defines `enum proc_state`, `struct proc_control_block` (PCB), `struct scheduler_ctx`, and function prototypes. |
+| `worker.c` | Implements the child worker process (`worker_run`) which pauses itself at startup (`raise(SIGSTOP)`) and executes a finite multi-step CPU workload when resumed. |
+| `scheduler.c` | Implements the parent Round-Robin scheduler (`scheduler_init`, `scheduler_run`, `scheduler_print_summary`) using `setitimer(ITIMER_REAL)`, `SIGALRM`, `SIGCHLD`, `SIGSTOP`, `SIGCONT`, and writes state transitions (`INIT`, `DISPATCH`, `PREEMPT`, `TERMINATE`) to `/proc/timeshare` via `log_kernel_event()`. |
+| `main.c` | Provides the interactive startup prompt (and optional CLI argument parsing), strict input validation, and top-level execution flow. |
+| `kmod/timeshare_kmod.c` | Loadable Linux Kernel Module (91 lines, 3 core handlers) that registers `/proc/timeshare`, receives user-space scheduler transitions via `write()` (`copy_from_user` + `pr_info` to `dmesg`), and serves kernel telemetry summaries via `read()` (`seq_printf`). |
+| `kmod/Makefile` | Kbuild makefile that compiles `kmod/timeshare_kmod.ko` against `/lib/modules/$(uname -r)/build`. |
+| `Makefile` | Automates building user space (`make`), building the kernel module (`make kmod`), running (`make run`), demoing (`make demo`), testing (`make test`), and cleaning (`make clean`, `make kmod-clean`). |
+| `EXPLANATION.md` | Comprehensive theory guide (Time-Sharing vs. Round-Robin, Linus Torvalds' 1991 minimal TTY, line-by-line walkthrough of user space + `kmod/timeshare_kmod.c`, and a 1-week study & video presentation plan). |
 
 ---
 
-## How Kernel-Level Time-Sharing Works
+## How Time-Sharing & Kernel `/proc` Integration Work
+
+> *"This short period of time during which the user gets the attention of the CPU is known as time slice, time slot, or quantum. It is typically of the order of 10 to 100 milliseconds."* — GeeksforGeeks (Time-Sharing Operating System)
+
+In a **Time-Sharing Operating System**, multiple interactive processes share a single CPU by dividing execution time into short **time slices (quantums)** of **10 to 100 ms**. **Round-Robin (RR)** is the scheduling algorithm that implements Time-Sharing by cycling through runnable processes in a circular queue using two complementary OS mechanisms:
+1. **Timer (`setitimer(ITIMER_REAL)`)**: Measures the fixed time quantum (`10–100 ms`) and raises an asynchronous `SIGALRM` interrupt when the active slice expires.
+2. **Signals (`SIGALRM`, `SIGSTOP`, `SIGCONT`, `SIGCHLD`)**: Act as the preemption and context-switching mechanism—pausing the running child (`SIGSTOP`), resuming the next runnable child (`SIGCONT`), and waking the scheduler early if a child finishes (`SIGCHLD`).
 
 ```text
-User Space (Ring 3)                             Linux Kernel Space (Ring 0 — timeshare_kmod.ko)
--------------------                             -----------------------------------------------
-1. ./timeshare_ctl (or echo "3 400") ---------> /proc/timeshare (timeshare_proc_write)
-                                                Spawns coordinator kthread (ts_sched_rr)
-                                                & worker kthreads P1..Pn (ts_worker_1..n)
-                                                Each worker pauses on wait_queue (State: READY)
+User Space (Ring 3: ./timeshare_sim)                Kernel Space (Ring 0: timeshare_kmod.ko)
+------------------------------------                ----------------------------------------
+1. fork() children P1..Pn
+   Child calls raise(SIGSTOP) -> State: READY
+   write("/proc/timeshare", "INIT P1 ...")  ------> timeshare_proc_write()
+                                                    copy_from_user() -> event_count++
+                                                    pr_info() -> logs to dmesg
 
-2. Round-Robin Dispatch                         Coordinator picks next runnable Pi
-                                                hrtimer_start(quantum_ms, HRTIMER_MODE_REL)
-                                                Sets Pi->run_granted = true
-                                                wake_up_interruptible(&Pi->wq) (State: RUNNING)
-                                                Pi executes workload ticks & logs via pr_info()
+2. Pick next runnable Pi in Round-Robin
+   setitimer(ITIMER_REAL, quantum_ms)
+   kill(Pi, SIGCONT) -> State: RUNNING
+   write("/proc/timeshare", "DISPATCH ...") ------> timeshare_proc_write() -> dmesg
 
-3. Hardware/Kernel Timer Interrupt              quantum_ms expires -> timeshare_timer_cb() fires
-                                                Sets timer_expired = true, Pi->run_granted = false
-                                                Pi pauses on wait_queue (State: STOPPED)
+3. Timer expires -> Kernel delivers SIGALRM
+   kill(Pi, SIGSTOP) -> State: STOPPED
+   write("/proc/timeshare", "PREEMPT ...")  ------> timeshare_proc_write() -> dmesg
 
-4. Repeat Round-Robin P1 -> P2 -> ... -> Pn     Until all worker kthreads complete all steps
-   Streams trace & summary via /proc/timeshare  (State: TERMINATED) & logs summary to dmesg
+4. Child finishes all steps -> exits (SIGCHLD)
+   waitpid() reaps Pi -> State: TERMINATED
+   write("/proc/timeshare", "TERMINATE ...") -----> timeshare_proc_write() -> dmesg
+
+5. Inspect kernel state from shell:
+   cat /proc/timeshare (read() syscall)     ------> timeshare_proc_show()
+                                                    seq_printf() returns total events & last event
 ```
 
-### Kernel Process State Machine
-
-```text
-         kthread_create() + wait_event_interruptible()
-[NEW] -------------------------------------------------> [PROC_READY]
-                                                              |
-                                                              | Scheduler sets run_granted = true
-                                                              | & calls wake_up_interruptible()
-                                                              v
-         hrtimer expires (timeshare_timer_cb)          [PROC_RUNNING] -----> Completes all steps
-      +-----------------------------------------------        |              & sets finished = true
-      |                                                       |                      |
-      v                                                       |                      v
-[PROC_STOPPED] -----------------------------------------------+              [PROC_TERMINATED]
-      (Woken on next Round-Robin turn via wake_up_interruptible)
-```
+> **Note**: If `timeshare_kmod.ko` is not loaded, `/proc/timeshare` does not exist and `log_kernel_event()` silently no-ops. Thus `./timeshare_sim` and `make test` always succeed without root privileges.
 
 ---
 
-## Quick Start: Running in a Virtual Machine
+## Debian Minimal (`netinst`, No GUI) VM Setup & Testing Guide (Rubric Row 1 — 30%)
 
-See **[VM_GUIDE.md](file:///home/henry/Documents/project-cawu-6/operating-system/VM_GUIDE.md)** for full instructions on all VM platforms. Here are the quickest ways to run:
+Inspired by Linus Torvalds' 1991 Linux `0.01` environment (`Kernel + tty1 + bash + gcc + make`), the cleanest instructional OS setup is **Debian 12 (`Bookworm`) Minimal (`netinst`)** with **no desktop GUI**:
 
-### Option A: Instant QEMU Kernel VM in Terminal (No `sudo` Needed!)
+### Step 1: Download & Create the Virtual Machine
+1. Download the official **Debian `netinst` ISO** (~650 MB) from [debian.org/distrib/netinst](https://www.debian.org/distrib/netinst) (`debian-12.x.x-amd64-netinst.iso`, or `arm64` on Apple Silicon UTM/VMware).
+2. In **VirtualBox**, **VMware**, **UTM**, or **QEMU/KVM**, create a new Linux VM:
+   - **Memory (RAM)**: `1024 MB` – `2048 MB`
+   - **Processors**: `1` or `2` vCPUs
+   - **Hard Disk**: `10 GB` – `20 GB` dynamically allocated
+
+### Step 2: Install Debian Minimal (TTY-Only, No GUI)
+1. Boot from the ISO and select **Install** (text-mode installer).
+2. Complete the hostname, root password, non-root user creation, and disk partitioning (**Guided - use entire disk** -> **All files in one partition**).
+3. At the **Software selection (`tasksel`)** screen, use `Spacebar` to configure:
+   - `[ ] Debian desktop environment` (**UNCHECK**)
+   - `[ ] ... GNOME` (**UNCHECK**)
+   - `[*] SSH server` *(optional — helpful for copy-pasting from your host terminal)*
+   - `[*] standard system utilities` (**KEEP CHECKED**)
+4. Install the GRUB boot loader to the primary drive and reboot. Your VM will boot in under 5 seconds directly into a pure Linux `tty1` login prompt.
+
+### Step 3: Install GCC, Make, and Matching Kernel Headers
+Log in to your Debian VM and install the compiler toolchain and kernel headers:
 ```bash
-# Build the kernel module and boot the interactive QEMU Linux VM:
-make vm-qemu
+su -
+apt update
+apt install -y build-essential linux-headers-$(uname -r) git sudo
+usermod -aG sudo <your-username>
+exit
+```
+*(Log out and log back in so `sudo` takes effect, or run privileged commands as `root`.)*
 
-# Or run the non-interactive 3-process, 400 ms demo inside the QEMU VM:
+### Step 4: Clone & Build Both User Space and the Kernel Module
+```bash
+git clone https://github.com/chukynya/kring-os.git
+cd kring-os
+
+# 1. Build the user-space Round-Robin simulator (timeshare_sim)
+make
+
+# 2. Build the Loadable Kernel Module (kmod/timeshare_kmod.ko)
+make kmod
+```
+
+### Step 5: Load the Kernel Module & Run the Full Demonstration
+```bash
+# 1. Insert the kernel module into the running Linux kernel
+sudo insmod kmod/timeshare_kmod.ko
+
+# 2. Verify the module is loaded and /proc/timeshare exists
+lsmod | grep timeshare
+cat /proc/timeshare
+
+# 3. Run the Round-Robin scheduler with a 50 ms time quantum (within 10-100 ms)
+./timeshare_sim 3 50
+
+# 4. Read the kernel telemetry summary via the read() syscall on /proc/timeshare
+cat /proc/timeshare
+
+# 5. View the kernel ring buffer logs written by timeshare_proc_write()
+sudo dmesg | tail -n 20
+
+# 6. Unload the kernel module cleanly when finished
+sudo rmmod timeshare_kmod
+```
+
+---
+
+## Standard User-Space Build & Test Commands (No Root Required)
+
+```bash
+# Compile timeshare_sim with -Wall -Wextra -Werror -std=c11 -pedantic
+make
+
+# Run interactively (prompts for number of processes and time quantum in ms)
+make run
+
+# Run non-interactive demo (3 processes, 400 ms quantum)
 make demo
 
-# Or run the full automated test suite inside the QEMU VM:
+# Run the automated test suite (5 test suites including boundary & invalid inputs)
 make test
 ```
 
-### Option B: VirtualBox + Vagrant (Windows / macOS / Linux)
-```bash
-vagrant up
-vagrant ssh
-cd ~/operating-system
-make run
-```
-
-### Option C: Inside Any Linux VM (Ubuntu / Fedora) with Kernel Headers
-```bash
-# 1. Automated one-step setup (installs kernel headers, builds, and loads module):
-bash vm/setup-vm.sh
-
-# 2. Or build and load manually:
-make
-sudo make load
-
-# 3. Run interactively via timeshare_ctl:
-make run
-
-# 4. Or interact directly with the kernel module via /proc/timeshare & dmesg:
-echo "3 400" > /proc/timeshare
-cat /proc/timeshare
-sudo dmesg | grep timeshare_kmod
-
-# 5. Unload the kernel module when finished:
-sudo make unload
-```
-
 ---
 
-## Sample Output (`/proc/timeshare` & `dmesg`)
+## Sample Output
 
+### 1. User-Space Scheduler Output (`./timeshare_sim 3 50`)
 ```text
-=========================================================
-   Linux Kernel Time-Sharing Scheduler (hrtimer & kthread)
-=========================================================
-Enter number of worker processes [1-10]: 3
-Enter time quantum in milliseconds [10-10000]: 400
-
-=== Process Table Init (3 processes, 400 ms quantum) ===
-[INIT] P1 (PID 158) | State: READY  | Steps: 3
-[INIT] P2 (PID 159) | State: READY  | Steps: 4
-[INIT] P3 (PID 160) | State: READY  | Steps: 5
+=== Process Table Init (3 processes, 50 ms quantum) ===
+[INIT] P1 (PID 219) | State: READY  | Steps: 3
+[INIT] P2 (PID 220) | State: READY  | Steps: 4
+[INIT] P3 (PID 221) | State: READY  | Steps: 5
 
 === Starting Round-Robin Time-Sharing Scheduler ===
 
-[SCHEDULER] Dispatch P1 (PID 158) | Slice #1 -> wake_up_process
-  [WORKER P1 | PID 158] Step 1/3 [####........]  33%
-[TIMER] Tick #1 (400 ms quantum expired) -> hrtimer interrupt
-[SCHEDULER] Preempted P1 (PID 158) wait_queue -> STOPPED
+[SCHEDULER] Dispatch P1 (PID 219) | Slice #1 -> SIGCONT
+  [WORKER P1 | PID 219] Step 1/3 [####........]  33%
+[TIMER] Tick #1 (50 ms quantum expired) -> SIGALRM received
+[SCHEDULER] Preempted P1 (PID 219) SIGSTOP -> STOPPED
 
-[SCHEDULER] Dispatch P2 (PID 159) | Slice #1 -> wake_up_process
-  [WORKER P2 | PID 159] Step 1/4 [###.........]  25%
-[TIMER] Tick #2 (400 ms quantum expired) -> hrtimer interrupt
-[SCHEDULER] Preempted P2 (PID 159) wait_queue -> STOPPED
+[SCHEDULER] Dispatch P2 (PID 220) | Slice #1 -> SIGCONT
+  [WORKER P2 | PID 220] Step 1/4 [###.........]  25%
+[TIMER] Tick #2 (50 ms quantum expired) -> SIGALRM received
+[SCHEDULER] Preempted P2 (PID 220) SIGSTOP -> STOPPED
 ...
 +-------------------------------------------------------+
 |             TIME-SHARING SIMULATION SUMMARY           |
 +---------+----------+--------------+--------+----------+
 | Process |   PID    | Final State  | Steps  |  Slices  |
 +---------+----------+--------------+--------+----------+
-|   P1    | 158      | TERMINATED   | 3      | 2        |
-|   P2    | 159      | TERMINATED   | 4      | 3        |
-|   P3    | 160      | TERMINATED   | 5      | 4        |
+|   P1    | 219      | TERMINATED   | 3      | 2        |
+|   P2    | 220      | TERMINATED   | 4      | 3        |
+|   P3    | 221      | TERMINATED   | 5      | 4        |
 +---------+----------+--------------+--------+----------+
-| Time Quantum     : 400    ms                          |
-| Timer Interrupts : 6      (hrtimer ticks)             |
-| Context Switches : 9      (kthread dispatches)        |
+| Time Quantum     : 50     ms                          |
+| Timer Interrupts : 6      (SIGALRM ticks)             |
+| Context Switches : 9      (SIGCONT dispatches)        |
 +-------------------------------------------------------+
+```
+
+### 2. Kernel `/proc/timeshare` & `dmesg` Output (When `timeshare_kmod.ko` is Loaded)
+```text
+$ cat /proc/timeshare
+Kernel Module : timeshare_kmod (ACTIVE)
+Events Logged : 21
+Last Event    : TERMINATE P3 pid=221 state=TERMINATED left=0
+
+$ sudo dmesg | tail -n 6
+[  142.104512] timeshare_kmod: event #16: DISPATCH P2 pid=220 slice=3 state=RUNNING
+[  142.134890] timeshare_kmod: event #17: TERMINATE P2 pid=220 state=TERMINATED left=1
+[  142.135011] timeshare_kmod: event #18: DISPATCH P3 pid=221 slice=3 state=RUNNING
+[  142.185204] timeshare_kmod: event #19: PREEMPT P3 pid=221 tick=6 state=STOPPED
+[  142.185340] timeshare_kmod: event #20: DISPATCH P3 pid=221 slice=4 state=RUNNING
+[  142.215610] timeshare_kmod: event #21: TERMINATE P3 pid=221 state=TERMINATED left=0
 ```
 
 ---
 
 ## Linux Kernel Coding Style Compliance
 
-Verify compliance at any time with:
-```bash
-make checkpatch
-```
+This project follows [Linux Kernel Coding Style](https://docs.kernel.org/process/coding-style.html):
 - **Indentation**: 8-character hard tabs (`\t`).
 - **Line Width**: Strictly $\le 80$ columns across all source and header files.
-- **Braces & Naming**: K&R style, `snake_case` functions/types, `UPPER_SNAKE_CASE` macros/enums, kernel-doc comments.
+- **Braces**: K&R style (`{` on the next line for functions; `{` on the same line for `if`, `for`, `while`, `switch`, `struct`, and `enum`).
+- **Naming**: Lowercase `snake_case` for variables, functions, and struct types; `UPPER_SNAKE_CASE` for macros and enum constants; no `typedef` hiding `struct` or `enum` types.
+- **Comments**: C89 `/* ... */` multi-line comments with kernel-doc function headers.
